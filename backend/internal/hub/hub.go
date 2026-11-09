@@ -8,7 +8,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"bus-tracker/internal/db"
+	"bus-tracker/internal/repository"
 )
 
 type Client struct {
@@ -65,7 +65,7 @@ func (h *Hub) Run(ctx context.Context, in <-chan *redis.Message) {
 			if !ok {
 				return
 			}
-			id, err := strconv.ParseInt(strings.TrimPrefix(m.Channel, db.ChannelPrefix), 10, 64)
+			id, err := strconv.ParseInt(strings.TrimPrefix(m.Channel, repository.ChannelPrefix), 10, 64)
 			if err == nil {
 				h.Broadcast(id, []byte(m.Payload))
 			}
