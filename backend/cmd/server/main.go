@@ -7,7 +7,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
-
+    "fmt"
 	"bus-tracker/internal/db"
 
 	"github.com/gin-gonic/gin"
@@ -87,5 +87,67 @@ func main() {
 	})
 
 	log.Println("Backend server starting on port 8080...")
+	// Background worker to read from Redis Pub/Sub and broadcast to WebSockets
+    go func() {
+        pubsub := rdb.Subscribe(ctx, "bus_updates")
+        defer pubsub.Close()
+        ch := pubsub.Channel()
+        for msg := range ch {
+            var payload TelemetryPayload
+            if err := json.Unmarshal([]byte(msg.Payload), &payload); err == nil {
+                manager.mu.Lock()
+                if busClients, exists := manager.clients[payload.BusID]; exists {
+                    for client := range busClients {
+                        if err := client.WriteMessage(websocket.TextMessage, []byte(msg.Payload)); err != nil {
+                            client.Close()
+                            delete(busClients, client)
+                        }
+                    }
+                }
+                manager.mu.Unlock()
+            }
+        }
+    }()
+
+	// WebSocket endpoint for real-time tracking dashboard / wscat
+    r.GET("/ws/track/:id", func(c *gin.Context) {
+        idStr := c.Param("id")
+        var busID int
+        if _, err := fmt.Sscanf(idStr, "%d", &busID); err != nil {
+            c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid bus ID"})
+            return
+        }
+
+        conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+        if err != nil {
+            log.Printf("Failed to upgrade websocket: %v", err)
+            return
+        }
+
+        manager.mu.Lock()
+        if manager.clients[busID] == nil {
+            manager.clients[busID] = make(map[*websocket.Conn]bool)
+        }
+        manager.clients[busID][conn] = true
+        manager.mu.Unlock()
+
+        defer func() {
+            manager.mu.Lock()
+            delete(manager.clients[busID], conn)
+            if len(manager.clients[busID]) == 0 {
+                delete(manager.clients, busID)
+            }
+            manager.mu.Unlock()
+            conn.Close()
+        }()
+
+        // Keep connection open and read messages (handles client disconnects)
+        for {
+            _, _, err := conn.ReadMessage()
+            if err != nil {
+                break
+            }
+        }
+    })
 	r.Run(":8080")
 }

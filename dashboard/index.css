@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+html, body, #root { height: 100%; margin: 0; }
+
+/* Bus marker (Leaflet divIcon, so no image assets are needed) */
+.bus-pin {
+  width: 28px; height: 28px; border-radius: 9999px;
+  background: #1f3a5f; border: 3px solid #fff;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, .4);
+  display: flex; align-items: center; justify-content: center;
+}
+.bus-arrow {
+  width: 0; height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 10px solid #fff;
+  transition: transform .3s;
+}
