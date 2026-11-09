@@ -1,4 +1,4 @@
-package db
+package repository
 
 import (
 	"context"
@@ -14,11 +14,10 @@ import (
 
 const ChannelPrefix = "telemetry:bus:"
 
-func Channel(busID int64) string   { return fmt.Sprintf("%s%d", ChannelPrefix, busID) }
+func Channel(busID int64) string { return fmt.Sprintf("%s%d", ChannelPrefix, busID) }
+
 func latestKey(busID int64) string { return fmt.Sprintf("bus:%d:latest", busID) }
 
-// Atomic compare-and-set: only store the ping if it is newer than what's cached.
-// Protects against late/out-of-order pings (e.g. an offline batch arriving).
 var setIfNewer = redis.NewScript(`
 local cur = redis.call('HGET', KEYS[1], 'ts')
 if cur and tonumber(cur) >= tonumber(ARGV[1]) then return 0 end
@@ -41,8 +40,7 @@ func (c *TelemetryCache) SetLatestIfNewer(ctx context.Context, t domain.Telemetr
 	if err != nil {
 		return false, err
 	}
-	n, err := setIfNewer.Run(ctx, c.rdb, []string{latestKey(t.BusID)},
-		t.Timestamp.UnixMilli(), payload, int(c.ttl.Seconds())).Int()
+	n, err := setIfNewer.Run(ctx, c.rdb, []string{latestKey(t.BusID)}, t.Timestamp.UnixMilli(), payload, int(c.ttl.Seconds())).Int()
 	return n == 1, err
 }
 
@@ -69,8 +67,6 @@ func (c *TelemetryCache) Publish(ctx context.Context, t domain.Telemetry) error 
 	return c.rdb.Publish(ctx, Channel(t.BusID), payload).Err()
 }
 
-// PSubscribe subscribes ONCE to every bus channel (pattern subscribe).
-// go-redis automatically reconnects and resubscribes.
 func (c *TelemetryCache) PSubscribe(ctx context.Context) *redis.PubSub {
 	return c.rdb.PSubscribe(ctx, ChannelPrefix+"*")
 }

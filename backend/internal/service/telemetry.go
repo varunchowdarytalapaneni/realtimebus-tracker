@@ -1,4 +1,4 @@
-package handlers
+package service
 
 import (
 	"context"
@@ -10,15 +10,14 @@ import (
 	"bus-tracker/internal/domain"
 )
 
-// Interfaces are defined here (consumer side) so the service never imports Redis/Postgres.
 type Cache interface {
-	SetLatestIfNewer(ctx context.Context, t domain.Telemetry) (bool, error)
-	GetLatest(ctx context.Context, busID int64) (*domain.Telemetry, error)
-	Publish(ctx context.Context, t domain.Telemetry) error
+	SetLatestIfNewer(context.Context, domain.Telemetry) (bool, error)
+	GetLatest(context.Context, int64) (*domain.Telemetry, error)
+	Publish(context.Context, domain.Telemetry) error
 }
 
 type Store interface {
-	InsertBatch(ctx context.Context, items []domain.Telemetry) error
+	InsertBatch(context.Context, []domain.Telemetry) error
 }
 
 const (
@@ -34,14 +33,9 @@ type TelemetryService struct {
 }
 
 func NewTelemetryService(cache Cache, store Store) *TelemetryService {
-	return &TelemetryService{
-		cache:     cache,
-		store:     store,
-		persistCh: make(chan domain.Telemetry, persistQueueSize),
-	}
+	return &TelemetryService{cache: cache, store: store, persistCh: make(chan domain.Telemetry, persistQueueSize)}
 }
 
-// Ingest validates pings, updates the live view (Redis), and queues them for history (Postgres).
 func (s *TelemetryService) Ingest(ctx context.Context, points []domain.Telemetry) error {
 	now := time.Now()
 	for i := range points {
@@ -49,11 +43,7 @@ func (s *TelemetryService) Ingest(ctx context.Context, points []domain.Telemetry
 			return fmt.Errorf("point %d: %w", i, err)
 		}
 	}
-
 	sort.Slice(points, func(i, j int) bool { return points[i].Timestamp.Before(points[j].Timestamp) })
-
-	// Only the newest ping per bus goes to the live path, so a flushed offline
-	// batch doesn't "replay" the whole trip to viewers.
 	newest := make(map[int64]domain.Telemetry)
 	for _, p := range points {
 		newest[p.BusID] = p
@@ -69,8 +59,6 @@ func (s *TelemetryService) Ingest(ctx context.Context, points []domain.Telemetry
 			}
 		}
 	}
-
-	// Every ping goes to history, without blocking the request.
 	for _, p := range points {
 		select {
 		case s.persistCh <- p:
@@ -85,12 +73,10 @@ func (s *TelemetryService) Latest(ctx context.Context, busID int64) (*domain.Tel
 	return s.cache.GetLatest(ctx, busID)
 }
 
-// RunPersister drains the queue and writes to Postgres in batches. Run as a goroutine.
 func (s *TelemetryService) RunPersister(ctx context.Context) {
 	ticker := time.NewTicker(persistInterval)
 	defer ticker.Stop()
 	buf := make([]domain.Telemetry, 0, persistBatchSize)
-
 	flush := func() {
 		if len(buf) == 0 {
 			return
@@ -102,7 +88,6 @@ func (s *TelemetryService) RunPersister(ctx context.Context) {
 		}
 		buf = buf[:0]
 	}
-
 	for {
 		select {
 		case <-ctx.Done():
